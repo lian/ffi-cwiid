@@ -261,8 +261,35 @@ module Cwiid
 end
 
 
-if $0 == __FILE__
-  #p W.get_bdinfo
-  p W.demo
-end
+#if $0 == __FILE__
+#  #p W.get_bdinfo
+#  p W.demo
+#end
 
+
+require 'eventmachine'
+
+EM.run do
+  #EM::PeriodicTimer.new(2) { puts '----tick' }
+  p 'press 1 + 2 on wiimote!'
+  @m = W.demo
+  p 'wiimote now connected'
+
+  @m.query_state
+  @m.enable_callback
+  @m.enable_button_callback
+
+  EM::PeriodicTimer.new(1) {
+    if @m.msg_queue.size >= 1
+      puts '---handle'
+      p @m.msg_queue
+      @m.msg_queue.clear
+    end
+  }
+
+  EM::Timer.new(60) {
+    @m.disable_callback
+    @m.destroy
+    EM.next_tick { EM.stop }
+  }
+end
