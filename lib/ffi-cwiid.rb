@@ -47,8 +47,6 @@ module Cwiid
 
     OnMesgCallback = Proc.new do |w_ptr, m_count, msg_ptr, time_ptr|
       #wiimote = SomeObjectCaste.new w_ptr
-      #p 'ON mesg callback! ..'
-      #Time.now; true
       ActiveWiimote.each { |w|
         if w.w_ptr == w_ptr
           w.msg_queue << [Time.now, 1]
@@ -72,7 +70,7 @@ module Cwiid
       ActiveWiimote.last
     end
 
-    def demo
+    def open_wiimote
       bdaddr     = MemoryPointer.new(:uint, 18)
 
       if wiimote = cwiid_open(bdaddr, 0)
@@ -163,8 +161,14 @@ module Cwiid
         Cwiid.cwiid_disable @w_ptr, CWIID_FLAG_MESG_IFC
       end
 
-      def enable_button_callback
-        set_mode RPT_MAP[:btn]
+      def enable_button_msg
+        enable_rpt :btn
+      end
+
+      def enable_rpt(key)
+        if _rpt = RPT_MAP[key]
+          set_mode _rpt
+        end
       end
 
       def led(index)
@@ -268,18 +272,56 @@ end
 
 
 require 'eventmachine'
+require 'bacon'
+Bacon.summary_on_exit
 
 EM.run do
   #EM::PeriodicTimer.new(2) { puts '----tick' }
   p 'press 1 + 2 on wiimote!'
-  @m = W.demo
+  @m = W.open_wiimote
   p 'wiimote now connected'
 
   @m.query_state
   @m.enable_callback
-  @m.enable_button_callback
+  @m.enable_rpt :btn # enable button msgs
 
-  EM::PeriodicTimer.new(1) {
+  describe 'WiimoteState' do
+    @w = W::ActiveWiimote.first
+
+    it '#query_state' do
+      res = @w.query_state
+      res.should.kind_of? Hash
+      res.keys.should == [:connected, :rpt_mode, :led, :rumble, :battery]
+      res[:led].should.kind_of? Array
+    end
+
+    it 'leds should be off' do
+      @w.query_state[:led].should == [ false, false, false, false ]
+    end
+
+    it 'rumble should be off' do
+      @w.query_state[:rumble].should == 0
+    end
+
+    it 'button rpt_mode should be on' do
+      @w.query_state[:rpt_mode].should == [:btn]
+    end
+
+    it 'set leds' do
+      @w.query_state[:led].should == [ false, false, false, false ]
+      @w.led 1
+      @w.query_state[:led].should == [ true,  false, false, false ]
+      @w.led 1
+      @w.led 4
+      @w.led 3
+      @w.query_state[:led].should == [ false, false, true, true ]
+      @w.led 4
+      @w.led 3
+      @w.query_state[:led].should == [ false, false, false, false ]
+    end
+  end
+
+  EM::PeriodicTimer.new(0.5) {
     if @m.msg_queue.size >= 1
       puts '---handle'
       p @m.msg_queue
@@ -287,7 +329,7 @@ EM.run do
     end
   }
 
-  EM::Timer.new(60) {
+  EM::Timer.new(5) {
     @m.disable_callback
     @m.destroy
     EM.next_tick { EM.stop }
