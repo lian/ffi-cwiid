@@ -75,9 +75,8 @@ module Cwiid
 
       if wiimote = cwiid_open(bdaddr, 0)
         unless wiimote.null?
-	        p wiimote
-	        p "wiimote connected id: %s" % [ W.cwiid_get_id(wiimote) ]
-
+	        # p wiimote
+	        # p "wiimote connected id: %s" % [ W.cwiid_get_id(wiimote) ]
 	        _create_wiimote wiimote # returns WiimoteState.new
         else
 	        p 'no wiimotes found!'; nil
@@ -87,32 +86,23 @@ module Cwiid
       bdaddr.free unless bdaddr.null?
     end
 
-
     def get_bdinfo
+      res = []
       ba_ptr     = MemoryPointer.new(:uint, 18)
       bdinfo_ptr = MemoryPointer.new(Bdinfo, 5) # max 5 find
 
       count = cwiid_get_bdinfo_array(-1, 2, -1, bdinfo_ptr, 0)
-
-      if count >= 1;  p "found #{count} wiimotes!"
-        count.times { |n|
-
-          W.ba2str(bdinfo_ptr[n], ba_ptr)
-	        p "device: %s" % [ ba_ptr.read_string ]
-        }
-      else
-        p 'no wiimotes found!'; nil
+      count.times do |n|
+        W.ba2str(bdinfo_ptr[n], ba_ptr)
+        #p "device: %s" % [ ba_ptr.read_string ]
+        res << ba_ptr.read_string
       end
+
+      res
     ensure
       ba_ptr.free     unless ba_ptr.null?
       bdinfo_ptr.free unless bdinfo_ptr.null?
     end
-
-
-
-    # toggle_bit shortcuts
-    #def tb(bf, b); (bf & b) != 0 ? (bf & ~b) : (bf | b);  end
-    def tb(bf, b); bf ^ b; end
 
     # bdaddr = str2ba_ptr('00:00:00:00:00:00') # 18 with \0 (unit? char?) int for now..
     def str2ba_ptr(s) # dear calller, dont forget to free it
@@ -120,7 +110,6 @@ module Cwiid
       str2ba(s.dup, ba_p)
       ba_p
     end
-
 
     ## onload: disable cwiid error handler
     cwiid_set_err nil
@@ -149,15 +138,17 @@ module Cwiid
       attr_accessor :w_ptr, :led_state, :rpt_mode, :rumble_state, :w_state, :msg_queue
       def initialize(wiimote_p)
 	      @w_ptr = wiimote_p
-        @led_state, @rpt_mode, @rumble_state = 0, 0, 0
+        @led_state, @rpt_mode, @rumble_state, @msg_cb = 0, 0, 0, false
         @msg_queue = []
       end
 
       def enable_callback
+        @msg_cb = true
         Cwiid.cwiid_enable @w_ptr, CWIID_FLAG_MESG_IFC
       end
 
       def disable_callback
+        @msg_cb = false
         Cwiid.cwiid_disable @w_ptr, CWIID_FLAG_MESG_IFC
       end
 
@@ -237,13 +228,8 @@ module Cwiid
 	      Cwiid.cwiid_set_rpt_mode w_ptr, @rpt_mode
       end
 
-      def connected?
-        !@w_ptr.nil?
-      end
-
-      def destroy
-        close!
-      end
+      def connected?; !@w_ptr.nil?; end
+      def destroy;    close!;       end
 
       def close!
         unless @w_ptr.nil?
@@ -265,28 +251,64 @@ module Cwiid
 end
 
 
-#if $0 == __FILE__
-#  #p W.get_bdinfo
-#  p W.demo
-#end
-
-
 require 'eventmachine'
 require 'bacon'
 Bacon.summary_on_exit
 
 EM.run do
   #EM::PeriodicTimer.new(2) { puts '----tick' }
-  p 'press 1 + 2 on wiimote!'
-  @m = W.open_wiimote
-  p 'wiimote now connected'
+  puts "\n--------------------------------------------------------------------"
+  puts '-> NOTE: make sure your wiimote is disconnected and not listening'
+  puts "--------------------------------------------------------------------\n"
+  puts '    ------------------------------------'
+  puts '    --> prepare to press 1+2 on wiimote'
+  puts '    ------------------------------------'
+  sleep 1.5
+  puts "\n--------------------------------------- starting test suite  -------\n\n"
 
-  @m.query_state
-  @m.enable_callback
-  @m.enable_rpt :btn # enable button msgs
 
-  describe 'WiimoteState' do
-    @w = W::ActiveWiimote.first
+  $m = nil
+
+  describe 'FFI::Cwiid#get_bdinfo #1' do
+    it 'should not find wiimote (none available)' do
+      info = FFI::Cwiid.get_bdinfo
+      info.should.kind_of? Array
+      info.size.should == 0
+    end
+
+  puts "\n\n    -------------------------------------"
+  puts '    ---> press 1+2 on wiimote now!'
+  puts "    -------------------------------------\n\n"
+  sleep 2
+
+    it 'should find wiimote (at least one available)' do
+      info = FFI::Cwiid.get_bdinfo
+      info.size.should >= 1
+    end
+  end
+
+
+  $m = W.open_wiimote
+  #p 'wiimote now connected'
+  $m.enable_callback
+  $m.enable_rpt :btn # enable button msgs
+
+
+  describe 'FFI::Cwiid #open_wiimote' do
+    it 'test wiimote is connected' do
+      FFI::Cwiid::ActiveWiimote.size.should == 1
+      w = FFI::Cwiid::ActiveWiimote.first
+      w.w_ptr.nil?.should == false
+    end
+  end
+
+
+
+  describe 'FFI::Cwiid::WiimoteState' do
+    @w = FFI::Cwiid::ActiveWiimote.first
+    it 'is connected' do
+      @w.connected?.should == true
+    end
 
     it '#query_state' do
       res = @w.query_state
@@ -322,16 +344,16 @@ EM.run do
   end
 
   EM::PeriodicTimer.new(0.5) {
-    if @m.msg_queue.size >= 1
+    if $m.msg_queue.size >= 1
       puts '---handle'
-      p @m.msg_queue
-      @m.msg_queue.clear
+      p $m.msg_queue
+      $m.msg_queue.clear
     end
   }
 
   EM::Timer.new(5) {
-    @m.disable_callback
-    @m.destroy
+    $m.disable_callback
+    $m.destroy
     EM.next_tick { EM.stop }
   }
 end
