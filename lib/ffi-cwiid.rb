@@ -13,9 +13,9 @@ end
 module FFI
 module Cwiid
     extend FFI::Library
-    ffi_lib 'libcwiid.so', 'libcwiid.so.0'
+    ffi_lib [File.dirname(__FILE__)+'/../vendor/cwiid/libcwiid/libwcwiid.so', 'libcwiid.so', 'libcwiid.so.0']
 
-    require 'cwiid-structs'
+    require File.dirname(__FILE__)+'/cwiid-structs.rb'
 
     #
     # ATTACH_FUNCTIONS
@@ -45,26 +45,54 @@ module Cwiid
     callback :rb_cwiid_mcb, [ :pointer, :int, :pointer, :pointer ], :void
     attach_function :cwiid_set_mesg_callback, [:pointer, :rb_cwiid_mcb ], :int
 
+    EmptyOnMesgCallback = Proc.new do |w_ptr, m_count, msg_ptr, time_ptr|
+    end
+
     OnMesgCallback = Proc.new do |w_ptr, m_count, msg_ptr, time_ptr|
-      #wiimote = SomeObjectCaste.new w_ptr
       ActiveWiimote.each { |w|
         if w.w_ptr == w_ptr
-          w.msg_queue << [Time.now, 1]
-          break
+          m = CwiidMesg.new( msg_ptr )
+          type = m[:type]
+
+          case m[:type]
+          when :CWIID_MESG_BTN
+            btn    = m[:btn_mesg].values.last
+
+            v = {
+              btn_2:      (btn & BTN_2) != 0,
+              btn_1:      (btn & BTN_1) != 0,
+              btn_A:      (btn & BTN_A) != 0,
+              btn_B:      (btn & BTN_B) != 0,
+              btn_MINUS:  (btn & BTN_MINUS) != 0,
+              btn_PLUS:   (btn & BTN_PLUS) != 0,
+              btn_HOME:   (btn & BTN_HOME) != 0,
+              btn_LEFT:   (btn & BTN_LEFT) != 0,
+              btn_RIGHT:  (btn & BTN_RIGHT) != 0,
+              btn_DOWN:   (btn & BTN_DOWN) != 0,
+              btn_UP:     (btn & BTN_UP) != 0,
+            }
+          when :CWIID_MESG_ACC
+            v = m[:acc_mesg][:acc]
+          else
+            v = nil
+          end
+          m    = nil
+
+          w.msg_queue << [m_count, type, v]
+          #break
         end
       }
-      # just pass the callback to ruby intern queue.
-      # note: use print in here and this block takes over stdin/out,
-      # and segfaults when ruby need it.. !?
     end
 
     attach_function :cwiid_enable,  [ :pointer, :uchar ], :int # *wiimote, flag
     attach_function :cwiid_disable, [ :pointer, :uchar ], :int # *wiimote, flag
 
+
     module_function
     ActiveWiimote = []
     def _create_wiimote(_wiimote)
-      Cwiid.cwiid_set_mesg_callback(_wiimote, OnMesgCallback)
+      #Cwiid.cwiid_set_mesg_callback(_wiimote, OnMesgCallback)
+      Cwiid.cwiid_set_mesg_callback(_wiimote, EmptyOnMesgCallback)
 
       ActiveWiimote << WiimoteState.new(_wiimote)
       ActiveWiimote.last
@@ -75,9 +103,8 @@ module Cwiid
 
       if wiimote = cwiid_open(bdaddr, 0)
         unless wiimote.null?
-	        # p wiimote
 	        # p "wiimote connected id: %s" % [ W.cwiid_get_id(wiimote) ]
-	        _create_wiimote wiimote # returns WiimoteState.new
+	        _create_wiimote wiimote
         else
 	        p 'no wiimotes found!'; nil
         end
@@ -104,8 +131,7 @@ module Cwiid
       bdinfo_ptr.free unless bdinfo_ptr.null?
     end
 
-    # bdaddr = str2ba_ptr('00:00:00:00:00:00') # 18 with \0 (unit? char?) int for now..
-    def str2ba_ptr(s) # dear calller, dont forget to free it
+    def str2ba_ptr(s)
       ba_p = MemoryPointer.new(:int, 18)
       str2ba(s.dup, ba_p)
       ba_p
@@ -114,7 +140,6 @@ module Cwiid
     ## onload: disable cwiid error handler
     cwiid_set_err nil
     ::W = FFI::Cwiid
-    #::Wiid = FFI::Wiid
 
 
     # autoload..
@@ -181,8 +206,6 @@ module Cwiid
         _state = CwiidState.new _states[0]
 
 
-        #puts 'report mode:'   #RPT_MAP.each {|k,v| p _state[:rpt_mode] & v }
-        #p _state[:rpt_mode]
         res[:rpt_mode] = []
         (_state[:rpt_mode] & RPT_MAP[:status]) != 0     && res[:rpt_mode] << :status
         (_state[:rpt_mode] & RPT_MAP[:btn]) != 0        && res[:rpt_mode] << :btn
@@ -192,8 +215,6 @@ module Cwiid
         (_state[:rpt_mode] & RPT_MAP[:balance]) != 0    && res[:rpt_mode] << :balance
         (_state[:rpt_mode] & RPT_MAP[:motionplus]) != 0 && res[:rpt_mode] << :motionplus
 
-
-        #puts 'report leds:'  #LED_MAP.each {|v| p _state[:led] & v }
         res[:led] = [
           (_state[:led] & LED_MAP[0]) != 0  ,
           (_state[:led] & LED_MAP[1]) != 0  ,
@@ -201,16 +222,25 @@ module Cwiid
           (_state[:led] & LED_MAP[3]) != 0  ,
         ]
 
-        #puts 'report rumble:'
-        res[:rumble] = _state[:rumble] & 1
-
-        #puts 'report battery:'
+        res[:rumble]  = _state[:rumble] & 1
         res[:battery] = _state[:battery]
 
-        #puts 'report buttons:'
-        #p _state[:buttons]
+        btn           = _state[:buttons]
 
-        #p 'exit query_state'; true
+        res[:buttons] = {
+          btn_2:      (btn & BTN_2) != 0,
+          btn_1:      (btn & BTN_1) != 0,
+          btn_A:      (btn & BTN_A) != 0,
+          btn_B:      (btn & BTN_B) != 0,
+          btn_MINUS:  (btn & BTN_MINUS) != 0,
+          btn_PLUS:   (btn & BTN_PLUS) != 0,
+          btn_HOME:   (btn & BTN_HOME) != 0,
+          btn_LEFT:   (btn & BTN_LEFT) != 0,
+          btn_RIGHT:  (btn & BTN_RIGHT) != 0,
+          btn_DOWN:   (btn & BTN_DOWN) != 0,
+          btn_UP:     (btn & BTN_UP) != 0,
+        }
+
         res
       ensure
         #p 'query_state: flush _states mem'
@@ -233,11 +263,12 @@ module Cwiid
 
       def close!
         unless @w_ptr.nil?
-          #p 'CwiidState clean: ptr, mem and state'
+          p 'CwiidState clean: ptr, mem and state'
           Cwiid.cwiid_close @w_ptr
+          p 'freeing now'
           begin
             @w_ptr.free
-            @w_ptr = nil
+            #@w_ptr = nil
           rescue
             #p 'failed to free @w_ptr!'
           end
@@ -250,6 +281,7 @@ module Cwiid
   end
 end
 
+__END__
 
 require 'eventmachine'
 require 'bacon'
@@ -292,6 +324,7 @@ EM.run do
   #p 'wiimote now connected'
   $m.enable_callback
   $m.enable_rpt :btn # enable button msgs
+  #$m.enable_rpt :acc
 
 
   describe 'FFI::Cwiid #open_wiimote' do
@@ -326,7 +359,7 @@ EM.run do
     end
 
     it 'button rpt_mode should be on' do
-      @w.query_state[:rpt_mode].should == [:btn]
+      @w.query_state[:rpt_mode].should == [:btn, :acc]
     end
 
     it 'set leds' do
@@ -343,17 +376,25 @@ EM.run do
     end
   end
 
-  EM::PeriodicTimer.new(0.5) {
+  #$m.enable_rpt :acc
+  EM::PeriodicTimer.new(60.5) {
     if $m.msg_queue.size >= 1
       puts '---handle'
       p $m.msg_queue
-      $m.msg_queue.clear
+      #$m.msg_queue.clear
     end
   }
 
-  EM::Timer.new(5) {
-    $m.disable_callback
-    $m.destroy
+  EM::PeriodicTimer.new(2.5) {
+    @w = FFI::Cwiid::ActiveWiimote.first
+    p @w.query_state
+  }
+
+  EM::Timer.new(60) {
+
+    #$m.disable_callback
+    p 'cb disabled'
+    #EM.next_tick { $m.destroy; p 'm destroy' }
     EM.next_tick { EM.stop }
   }
 end

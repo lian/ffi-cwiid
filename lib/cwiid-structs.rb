@@ -22,7 +22,7 @@ ENUM[:cwiid_command] = [
 	:CWIID_CMD_RPT_MODE
 ]
 ENUM[:cwiid_mesg_type] = [
-	:CWIID_MESG_STATUS, 1,
+	:CWIID_MESG_STATUS, 0,
 	:CWIID_MESG_BTN,
 	:CWIID_MESG_ACC,
 	:CWIID_MESG_IR,
@@ -173,6 +173,18 @@ class Bdinfo < FFI::PrettyStruct
 	 :btclass, :uint8, 3,
          :name,    :string #, 32
 end
+
+  BTN_2		   = 0x0001
+  BTN_1		   = 0x0002
+  BTN_B		   = 0x0004
+  BTN_A		   = 0x0008
+  BTN_MINUS	 = 0x0010
+  BTN_HOME	 = 0x0080
+  BTN_LEFT	 = 0x0100
+  BTN_RIGHT	 = 0x0200
+  BTN_DOWN	 = 0x0400
+  BTN_UP	   = 0x0800
+  BTN_PLUS	 = 0x1000
 
 end # Cwiid
 end # FFI
